@@ -1,87 +1,40 @@
-import { getContext } from "@/server/service/context";
-import type { ProviderCall } from "./types";
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, x-goog-api-key, Authorization",
+      },
+    });
+  }
 
-interface GeminiResponse {
-	candidates?: Array<{
-		content?: {
-			parts?: Array<{
-				text?: string;
-			}>;
-		};
-	}>;
-}
+  try {
+    const url = new URL(req.url);
+    const targetUrl = "https://generativelanguage.googleapis.com" + url.pathname + url.search;
+    const headers = new Headers(req.headers);
+    headers.set("Host", "generativelanguage.googleapis.com");
+    headers.delete("content-length");
 
-// Модели для ротации (от новейшей к самой стабильной)
-const GEMINI_MODELS = [
-	"gemini-3.8-flash",
-	"gemini-3.7-flash",
-	"gemini-3.5-flash",
-	"gemini-flash-latest",
-	"gemini-2.5-flash",
-];
+    const bodyText = req.body ? await req.text() : undefined;
 
-export const callGemini: ProviderCall = async (system, user) => {
-	const env = getContext() as unknown as Record<string, string | undefined>;
-	const apiKey = env.GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-	
-	if (!apiKey) {
-		throw new Error("GEMINI_API_KEY не задан в .dev.vars");
-	}
+    const response = await fetch(targetUrl, {
+      method: req.method,
+      headers: headers,
+      body: bodyText,
+    });
 
-	const baseUrl = "https://gemini-proxy.atomica-x.deno.net/v1beta/models";
+    const responseBody = await response.arrayBuffer();
+    const resHeaders = new Headers(response.headers);
+    resHeaders.set("Access-Control-Allow-Origin", "*");
+    resHeaders.delete("content-encoding");
+    resHeaders.delete("transfer-encoding");
+    resHeaders.delete("content-length");
 
-	// Перебираем модели
-	for (const modelId of GEMINI_MODELS) {
-		try {
-			console.log(`[gemini] Пробуем модель: ${modelId}...`);
-			
-			const url = `${baseUrl}/${modelId}:generateContent`;
-			
-			const response = await fetch(url, {
-				method: "POST",
-				headers: {
-					"x-goog-api-key": apiKey,
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify({
-					systemInstruction: {
-						parts: [{ text: system }]
-					},
-					contents: [
-						{ role: "user", parts: [{ text: user }] }
-					],
-					generationConfig: {
-						responseMimeType: "application/json", // Просим строгий JSON
-						temperature: 0.5
-					}
-				}),
-			});
-
-			if (!response.ok) {
-				// Если перегрузка (503) или лимиты (429), пробуем следующую модель
-				if (response.status === 503 || response.status === 429) {
-					console.warn(`[gemini] Модель ${modelId} недоступна (${response.status}). Переключаюсь...`);
-					continue; 
-				}
-				// Если ошибка другая (например, 400), выбрасываем исключение
-				const errorText = await response.text();
-				throw new Error(`Gemini API error: ${response.status} ${errorText}`);
-			}
-
-			const data = (await response.json()) as GeminiResponse;
-			const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-			if (!text) {
-				throw new Error("Пустой ответ от Gemini");
-			}
-
-			console.log(`[gemini] ✅ Успех через модель: ${modelId}`);
-			return text;
-
-		} catch (error: any) {
-			console.error(`[gemini] Ошибка при запросе к ${modelId}:`, error.message);
-		}
-	}
-
-	throw new Error("Все доступные модели Gemini исчерпали лимиты или недоступны.");
-};
+    return new Response(responseBody, { status: response.status, headers: resHeaders });
+  } catch (err) {
+    return new Response(JSON.stringify({ error: err.message }), { 
+      status: 500, headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
+    });
+  }
+});
