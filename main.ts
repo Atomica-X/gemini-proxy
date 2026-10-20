@@ -1,5 +1,4 @@
 Deno.serve(async (req: Request) => {
-  // Настройка CORS, чтобы наш Cloudflare Worker мог делать запросы
   if (req.method === "OPTIONS") {
     return new Response("ok", {
       headers: {
@@ -15,22 +14,23 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    // Берем путь из запроса (например, /v1beta/interactions)
     const url = new URL(req.url);
     const targetUrl = "https://generativelanguage.googleapis.com" + url.pathname + url.search;
-
-    // Копируем заголовки из оригинального запроса
     const headers = new Headers(req.headers);
     headers.set("Host", "generativelanguage.googleapis.com");
+    
+    // ВАЖНО: Убираем content-length, Deno пересчитает его сам
+    headers.delete("content-length");
 
-    // Отправляем запрос в Google из дата-центра Deno (США/Европа)
+    // ВАЖНО: Читаем тело как текст, чтобы избежать ошибок со стримами
+    const bodyText = await req.text();
+
     const response = await fetch(targetUrl, {
       method: "POST",
       headers: headers,
-      body: req.body,
+      body: bodyText,
     });
 
-    // Возвращаем ответ Google обратно в наш Worker
     const resHeaders = new Headers(response.headers);
     resHeaders.set("Access-Control-Allow-Origin", "*");
 
@@ -39,6 +39,7 @@ Deno.serve(async (req: Request) => {
       headers: resHeaders,
     });
   } catch (err: any) {
+    console.error("Proxy Error:", err); // Это появится в логах Deno
     return new Response(JSON.stringify({ error: err.message }), { 
       status: 500,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
