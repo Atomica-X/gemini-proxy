@@ -1,30 +1,30 @@
 Deno.serve(async (req: Request) => {
+  // Разрешаем CORS
   if (req.method === "OPTIONS") {
     return new Response("ok", {
       headers: {
         "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, x-goog-api-key, Authorization",
       },
     });
   }
 
-  if (req.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 });
-  }
-
   try {
     const url = new URL(req.url);
     const targetUrl = "https://generativelanguage.googleapis.com" + url.pathname + url.search;
+    
+    // ЛОГ: Посмотрим, какой метод реально пришел от Cloudflare
+    console.log(`[Deno Proxy] Входящий запрос: ${req.method} ${url.pathname}`);
+
     const headers = new Headers(req.headers);
     headers.set("Host", "generativelanguage.googleapis.com");
-    
-    // ВАЖНО: Убираем content-length, Deno пересчитает его сам
     headers.delete("content-length");
 
-    // ВАЖНО: Читаем тело как текст, чтобы избежать ошибок со стримами
-    const bodyText = await req.text();
+    // Читаем тело, если оно есть
+    const bodyText = req.body ? await req.text() : undefined;
 
+    // ПРИНУДИТЕЛЬНО шлем POST, даже если пришел GET (чтобы обойти редиректы)
     const response = await fetch(targetUrl, {
       method: "POST",
       headers: headers,
@@ -39,7 +39,7 @@ Deno.serve(async (req: Request) => {
       headers: resHeaders,
     });
   } catch (err: any) {
-    console.error("Proxy Error:", err); // Это появится в логах Deno
+    console.error("[Deno Proxy] Ошибка:", err);
     return new Response(JSON.stringify({ error: err.message }), { 
       status: 500,
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
